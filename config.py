@@ -7,9 +7,9 @@ import re
 默认使用本地值如果不存在从环境变量中获取值
 """
 
-# 阅读次数 默认40次/20分钟
+# 阅读次数 默认40次/20分钟（每次间隔30秒=0.5分钟，240次=120分钟=2小时）
 READ_NUM = int(os.getenv('READ_NUM') or 40)
-# 需要推送时可选，可选pushplus、wxpusher、telegram
+# 需要推送时可选，可选pushplus、wxpusher、telegram、serverchan、wework
 PUSH_METHOD = "" or os.getenv('PUSH_METHOD')
 # pushplus推送时需填
 PUSHPLUS_TOKEN = "" or os.getenv("PUSHPLUS_TOKEN")
@@ -20,6 +20,10 @@ TELEGRAM_CHAT_ID = "" or os.getenv("TELEGRAM_CHAT_ID")
 WXPUSHER_SPT = "" or os.getenv("WXPUSHER_SPT")
 # SeverChan推送时需填
 SERVERCHAN_SPT = "" or os.getenv("SERVERCHAN_SPT")
+# 企业微信群机器人 Webhook 完整地址
+WEWORK_WEBHOOK = "" or os.getenv("WEWORK_WEBHOOK")
+# 企业微信消息类型：markdown 或 text
+WEWORK_MSG_TYPE = os.getenv("WEWORK_MSG_TYPE") or "markdown"
 
 
 # read接口的bash命令，本地部署时可对应替换headers、cookies
