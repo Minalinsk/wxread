@@ -12,6 +12,8 @@ from config import (
     TELEGRAM_BOT_TOKEN,
     TELEGRAM_CHAT_ID,
     WXPUSHER_SPT,
+    WEWORK_WEBHOOK,
+    WEWORK_MSG_TYPE,
 )
 
 logger = logging.getLogger(__name__)
@@ -110,6 +112,51 @@ class PushNotification:
                     time.sleep(sleep_time)
         return False
 
+    def push_wework(self, content, webhook, msg_type="markdown", is_success=True):
+        """企业微信群机器人推送
+
+        webhook: 形如 https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=xxxxxxxx
+        msg_type: markdown / text
+        """
+        attempts = 5
+        if not webhook:
+            logger.error("企业微信 Webhook 未配置，跳过推送。")
+            return False
+
+        # 加个状态标记，让消息更醒目
+        flag = "✅" if is_success else "❌"
+
+        if msg_type == "text":
+            payload = {"msgtype": "text", "text": {"content": f"{flag} {content}"}}
+        else:
+            # markdown 模式下确保标题行加粗
+            md_content = f"**{flag} 微信读书任务通知**\n{content}"
+            payload = {"msgtype": "markdown", "markdown": {"content": md_content}}
+
+        for attempt in range(attempts):
+            try:
+                response = requests.post(
+                    webhook,
+                    data=json.dumps(payload).encode("utf-8"),
+                    headers=self.headers,
+                    timeout=10,
+                )
+                response.raise_for_status()
+                res = response.json()
+                # 企业微信成功返回 {"errcode":0,"errmsg":"ok"}
+                if res.get("errcode") == 0:
+                    logger.info("企业微信推送成功: %s", response.text)
+                    return True
+                logger.error("企业微信推送返回错误: %s", response.text)
+                return False
+            except requests.exceptions.RequestException as exc:
+                logger.error("企业微信推送失败: %s", exc)
+                if attempt < attempts - 1:
+                    sleep_time = random.randint(5, 15)
+                    logger.info("%d 秒后重试...", sleep_time)
+                    time.sleep(sleep_time)
+        return False
+
 
 def push(content, method, is_success = True):
     notifier = PushNotification()
@@ -128,6 +175,8 @@ def push(content, method, is_success = True):
         return notifier.push_wxpusher(content, WXPUSHER_SPT)
     if method == "serverchan":
         return notifier.push_serverChan(content, SERVERCHAN_SPT, is_success)
+    if method == "wework":
+        return notifier.push_wework(content, WEWORK_WEBHOOK, WEWORK_MSG_TYPE, is_success)
 
-    logger.warning("无效的通知渠道 '%s'，已跳过推送。支持：pushplus、telegram、wxpusher、serverchan", method)
+    logger.warning("无效的通知渠道 '%s'，已跳过推送。支持：pushplus、telegram、wxpusher、serverchan、wework", method)
     return False
