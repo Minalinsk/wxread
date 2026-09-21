@@ -6,21 +6,25 @@ concurrency:
 
 on:
   schedule:
-    # 北京 04:15 触发（UTC 前一天 20:15），真正的开跑时刻由下面那步
-    # 「Wait until 05:07 (Beijing)」等到点再动手。
+    # 北京 03:15 开跑（cron 北京 00:35 触发 = UTC 前一天 16:35）。
+    # 阅读脚本本身要跑约 2 小时 5 分（READ_NUM=240 × 30 秒），而且跑完就直接推送，
+    # 所以「阅读完成」那条消息大约落在 05:20~05:40。
+    #   00:35 触发 -> 等到 03:15 -> 开跑前随机 0-20 分 -> 阅读约 2 小时 5 分 -> 直接推送
     # 为什么绕这一圈：GitHub 的 cron 只是个"大概几点把任务拉起来"的意向，
     # 实测本仓库 05:00 / 05:08 那两次实际 06:32、06:46 才派活（晚 1 小时 40 分以上）。
     # 分针也刻意不写 00（整点是 GitHub 最挤的时候）。
-    - cron: '15 20 * * *'
+    - cron: '35 16 * * *'
   workflow_dispatch:  # 手动触发
 
 jobs:
   deploy:
     runs-on: ubuntu-22.04
     environment: AutoRead  # 指定环境
-    # 单次最长 = 等待（最多 52 分钟）+ 脚本（READ_NUM=240、每次 30 秒 ≈ 2 小时 5 分）
-    # ≈ 3 小时。GitHub 的 job 上限就是 360 分钟，这里显式写出来当"天花板"，
-    # 免得以后以为没有约束：READ_NUM 要大幅调大时，先算一下别撞到 6 小时。
+    # 单次最长 = 等待（最多 2 小时 40 分）+ 开跑前随机 20 分
+    # + 脚本（READ_NUM=240、每次 30 秒 ≈ 2 小时 5 分）≈ 5 小时 5 分。
+    # GitHub 的 job 上限就是 360 分钟，
+    # 这里显式写出来当"天花板"，免得以后以为没有约束：
+    # READ_NUM 要大幅调大时，先算一下别撞到 6 小时。
     timeout-minutes: 360
 
     steps:
@@ -31,10 +35,10 @@ jobs:
         echo "nameserver 8.8.4.4" | sudo tee -a /etc/resolv.conf
 
     - name: Checkout repository
-      uses: actions/checkout@v2
+      uses: actions/checkout@v4
 
     - name: Set up Python
-      uses: actions/setup-python@v2
+      uses: actions/setup-python@v5
       with:
         python-version: '3.10'
 
@@ -43,19 +47,19 @@ jobs:
         python -m pip install --upgrade pip
         pip install certifi==2024.8.30 charset-normalizer==3.4.0 idna==3.10 requests==2.32.3 urllib3==2.2.3
 
-    # GitHub 的 cron 不准，所以用「绝对时刻」等到北京 05:07 再开跑：
-    #   派活早了就多等一会儿；派活晚了（已过 05:07）就直接开跑，并把迟到分钟数打进日志。
-    # 目标时刻换算成 UTC 计算（北京 = UTC+8，05:07 = UTC 前一天 21:07），
+    # GitHub 的 cron 不准，所以用「绝对时刻」等到北京 03:15 再开跑：
+    #   派活早了就多等一会儿；派活晚了（已过 03:15）就直接开跑，并把迟到分钟数打进日志。
+    # 目标时刻换算成 UTC 计算（北京 = UTC+8，03:15 = UTC 同一天 19:15），
     # 只用 date -u，不依赖 runner 的时区数据。
     # MAX_WAIT 是保险：万一排队跨过 UTC 零点，date -u +%F 会把目标算成"明天"，
     # 白等 20 多小时、还堵住 concurrency 队列（cancel-in-progress 是 false），
-    # 所以超过 2 小时就放弃等待、直接开跑。
-    - name: Wait until 05:07 (Beijing)
+    # 所以超过 3 小时就放弃等待、直接开跑。
+    - name: Wait until 03:15 (Beijing)
       if: github.event_name == 'schedule'
       run: |
-        TARGET_UTC="21:07"     # 北京 05:07
-        TARGET_BJ="05:07"
-        MAX_WAIT=7200          # 2 小时，超过就不等了
+        TARGET_UTC="19:15"     # 北京 03:15
+        TARGET_BJ="03:15"
+        MAX_WAIT=10800         # 3 小时，超过就不等了
         now=$(date -u +%s)
         target=$(date -u -d "$(date -u +%F) $TARGET_UTC" +%s)
         diff=$((target - now))
@@ -67,6 +71,17 @@ jobs:
           echo "等到北京 $TARGET_BJ 再开跑，还需 $((diff / 60)) 分 $((diff % 60)) 秒"
           sleep "$diff"
         fi
+
+    # 到点后再叠一个 0-20 分钟的随机延迟，让每天的开跑时刻（以及跑完的推送时刻）
+    # 不固定成一个"机器特征"。
+    # 推送不额外叠加随机：脚本跑完就推，保持"跑完直接推送"。
+    # 只对定时触发生效；手动触发（测试）不加，方便复现。
+    - name: Random 0-20 min delay
+      if: github.event_name == 'schedule'
+      run: |
+        j=$((RANDOM % 1201))
+        echo "随机延迟 $((j / 60)) 分 $((j % 60)) 秒后再开跑"
+        sleep "$j"
 
     - name: Run deployment script
       env:
