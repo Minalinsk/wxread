@@ -6,17 +6,22 @@ concurrency:
 
 on:
   schedule:
-    # 每天北京时间 05:08（UTC 前一天 21:08）触发
-    # 分针刻意用 08、不用 00：GitHub 的定时器在整点最挤，整点写法的任务会被推迟，
-    # 严重时晚一两个小时才派活（实测本仓库 05:00 那两次跑成了 06:32 / 06:46）。
-    # 实际的 0-20 分钟随机延迟由 workflow 内 "Random Delay" 步骤完成
-    - cron: '8 21 * * *'
+    # 北京 04:15 触发（UTC 前一天 20:15），真正的开跑时刻由下面那步
+    # 「Wait until 05:07 (Beijing)」等到点再动手。
+    # 为什么绕这一圈：GitHub 的 cron 只是个"大概几点把任务拉起来"的意向，
+    # 实测本仓库 05:00 / 05:08 那两次实际 06:32、06:46 才派活（晚 1 小时 40 分以上）。
+    # 分针也刻意不写 00（整点是 GitHub 最挤的时候）。
+    - cron: '15 20 * * *'
   workflow_dispatch:  # 手动触发
 
 jobs:
   deploy:
     runs-on: ubuntu-22.04
     environment: AutoRead  # 指定环境
+    # 单次最长 = 等待（最多 52 分钟）+ 脚本（READ_NUM=240、每次 30 秒 ≈ 2 小时 5 分）
+    # ≈ 3 小时。GitHub 的 job 上限就是 360 分钟，这里显式写出来当"天花板"，
+    # 免得以后以为没有约束：READ_NUM 要大幅调大时，先算一下别撞到 6 小时。
+    timeout-minutes: 360
 
     steps:
 
@@ -38,12 +43,30 @@ jobs:
         python -m pip install --upgrade pip
         pip install certifi==2024.8.30 charset-normalizer==3.4.0 idna==3.10 requests==2.32.3 urllib3==2.2.3
 
-    - name: Random Delay (0-20 min)
+    # GitHub 的 cron 不准，所以用「绝对时刻」等到北京 05:07 再开跑：
+    #   派活早了就多等一会儿；派活晚了（已过 05:07）就直接开跑，并把迟到分钟数打进日志。
+    # 目标时刻换算成 UTC 计算（北京 = UTC+8，05:07 = UTC 前一天 21:07），
+    # 只用 date -u，不依赖 runner 的时区数据。
+    # MAX_WAIT 是保险：万一排队跨过 UTC 零点，date -u +%F 会把目标算成"明天"，
+    # 白等 20 多小时、还堵住 concurrency 队列（cancel-in-progress 是 false），
+    # 所以超过 2 小时就放弃等待、直接开跑。
+    - name: Wait until 05:07 (Beijing)
       if: github.event_name == 'schedule'
       run: |
-        DELAY=$((RANDOM % 1201))
-        echo "本次随机延迟 ${DELAY} 秒（约 $((DELAY / 60)) 分 $((DELAY % 60)) 秒）"
-        sleep $DELAY
+        TARGET_UTC="21:07"     # 北京 05:07
+        TARGET_BJ="05:07"
+        MAX_WAIT=7200          # 2 小时，超过就不等了
+        now=$(date -u +%s)
+        target=$(date -u -d "$(date -u +%F) $TARGET_UTC" +%s)
+        diff=$((target - now))
+        if [ "$diff" -le 0 ]; then
+          echo "已过北京 $TARGET_BJ，立即开跑（GitHub 排队晚了 $(( -diff / 60 )) 分钟）"
+        elif [ "$diff" -gt "$MAX_WAIT" ]; then
+          echo "⚠️ 距北京 $TARGET_BJ 还有 $((diff / 60)) 分钟，超过 $((MAX_WAIT / 60)) 分钟上限（多半是排队跨了 UTC 零点），不再等待，立即开跑"
+        else
+          echo "等到北京 $TARGET_BJ 再开跑，还需 $((diff / 60)) 分 $((diff % 60)) 秒"
+          sleep "$diff"
+        fi
 
     - name: Run deployment script
       env:
