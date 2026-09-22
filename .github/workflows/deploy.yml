@@ -74,11 +74,16 @@ jobs:
         READ_NUM: ${{ vars.READ_NUM }}  # 使用 Repository Variables
 
       run: |
-        # READ_NUM 本该来自 Repository Variable。变量被删/改名时，
-        # config.py 的 `int(os.getenv('READ_NUM') or 40)` 会**静默退化成 40 次（20 分钟）**，
-        # 读书时长腰斩而且一句错都不报 —— 这里兜一下，并打一条警告 annotation。
+        # READ_NUM 本该来自 Repository Variable。两种写坏的情况都在这里兜住：
+        #   ① 变量被删/改名 → 空串，config.py 的 `int(os.getenv('READ_NUM') or 40)`
+        #      会**静默退化成 40 次（20 分钟）**，读书时长腰斩而且一句错都不报；
+        #   ② 写成了非数字（比如 "240次"）→ 下面那句 $((READ_NUM / 2)) 直接算术报错，
+        #      整个 step 挂掉，报错信息还看不出是 READ_NUM 的问题。
         if [ -z "$READ_NUM" ]; then
           echo "::warning::READ_NUM 没配（Repository Variable），本次按 240 兜底。"
+          export READ_NUM=240
+        elif ! printf '%s' "$READ_NUM" | grep -Eq '^[0-9]+$'; then
+          echo "::warning::READ_NUM 不是正整数（读到的是 '$READ_NUM'），本次按 240 兜底。"
           export READ_NUM=240
         fi
         echo "本次阅读次数：$READ_NUM（约 $((READ_NUM / 2)) 分钟）"

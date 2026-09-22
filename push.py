@@ -19,6 +19,33 @@ from config import (
 logger = logging.getLogger(__name__)
 
 
+def _check_code(response, ok_codes, what):
+    """HTTP 200 不等于"推送成功"。
+
+    pushplus / wxpusher / serverchan 在 token 写错、套餐过期、内容被拦的时候
+    也是回 HTTP 200，只是 body 里的 code 变了。原来这三个渠道只做了
+    `raise_for_status()` 就直接 `return True`，于是"其实没推出去"会被记成成功，
+    任务日志一片祥和、人是收不到消息的。
+
+    返回 (是否成功, 说明)。body 不是 JSON、或者没有 code 字段时，按"判断不了"
+    处理 —— 保持旧行为（当成功）并记一条 debug，免得因为认不出新格式而误报失败。
+    """
+    try:
+        res = response.json()
+    except ValueError:
+        logger.debug("%s 的响应不是 JSON，按成功处理：%s", what, (response.text or "")[:200])
+        return True, "非 JSON 响应"
+    if not isinstance(res, dict) or "code" not in res:
+        logger.debug("%s 的响应里没有 code，按成功处理：%s", what, (response.text or "")[:200])
+        return True, "响应里没有 code"
+    if res.get("code") in ok_codes:
+        return True, "ok"
+    return False, "code=%s msg=%s" % (
+        res.get("code"),
+        res.get("msg") or res.get("message") or res.get("errmsg") or "",
+    )
+
+
 class PushNotification:
     def __init__(self):
         self.pushplus_url = "https://www.pushplus.plus/send"
@@ -41,7 +68,12 @@ class PushNotification:
                     data=json.dumps({"token": token, "title": title,"content": content,}).encode("utf-8"),headers=self.headers,timeout=10,)
                 response.raise_for_status()
                 logger.info("PushPlus 响应: %s", response.text)
-                return True
+                ok, why = _check_code(response, (200, "200"), "PushPlus")
+                if ok:
+                    return True
+                # token 错 / 套餐过期这类问题重试也没用，直接放弃
+                logger.error("PushPlus 推送失败：%s", why)
+                return False
             except requests.exceptions.RequestException as exc:
                 logger.error("PushPlus 推送失败: %s", exc)
                 if attempt < attempts - 1:
@@ -78,7 +110,11 @@ class PushNotification:
                 response = requests.get(url, timeout=10)
                 response.raise_for_status()
                 logger.info("WxPusher 响应: %s", response.text)
-                return True
+                ok, why = _check_code(response, (1000, "1000"), "WxPusher")
+                if ok:
+                    return True
+                logger.error("WxPusher 推送失败：%s", why)
+                return False
             except requests.exceptions.RequestException as exc:
                 logger.error("WxPusher 推送失败: %s", exc)
                 if attempt < attempts - 1:
@@ -103,7 +139,11 @@ class PushNotification:
                 )
                 response.raise_for_status()
                 logger.info("ServerChan 响应: %s", response.text)
-                return True
+                ok, why = _check_code(response, (0, "0"), "ServerChan")
+                if ok:
+                    return True
+                logger.error("ServerChan 推送失败：%s", why)
+                return False
             except requests.exceptions.RequestException as exc:
                 logger.error("ServerChan 推送失败: %s", exc)
                 if attempt < attempts - 1:

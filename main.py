@@ -98,13 +98,34 @@ def safe_push(content, is_success):
         return False
 
 
+def _env_int(name, default):
+    """读环境变量里的整数。
+
+    直接 `int(os.getenv(...) or 10)` 的问题是：环境变量写成 "10次" 这种
+    就直接 ValueError，任务**连启动都启动不了**，报错还很难看懂。
+    这里退化成"用默认值 + 记一条警告"，至少跑得起来。
+    """
+    raw = os.getenv(name)
+    if raw is None or str(raw).strip() == "":
+        return default
+    try:
+        val = int(str(raw).strip())
+    except (TypeError, ValueError):
+        logging.warning("%s=%r 不是整数，按默认值 %d 用。", name, raw, default)
+        return default
+    if val <= 0:
+        logging.warning("%s=%r 不是正数，按默认值 %d 用。", name, raw, default)
+        return default
+    return val
+
+
 # 连续失败的最大容忍次数，超过则终止，防止死循环烧额度
-MAX_FAIL_STREAK = int(os.getenv('MAX_FAIL_STREAK') or 10)
+MAX_FAIL_STREAK = _env_int('MAX_FAIL_STREAK', 10)
 
 # 「拿不到 synckey 就修一下」的最大连续次数。
 # 原来这条分支既不计次、也不 sleep，修不好就会**无间隔地一直打接口**，
 # 一路转到 job 超时（5 小时）才被强杀 —— 既烧额度又容易触发风控。
-MAX_SYNCKEY_FIX = int(os.getenv('MAX_SYNCKEY_FIX') or 5)
+MAX_SYNCKEY_FIX = _env_int('MAX_SYNCKEY_FIX', 5)
 
 
 def run_read():
@@ -129,9 +150,23 @@ def run_read():
 
         refresh_print(f"阅读进度: 第 {index}/{READ_NUM} 次，已完成 {(index - 1) * 0.5:.1f} 分钟")
         logging.debug("data: %s", data)
-        response = requests.post(READ_URL, headers=headers, cookies=cookies,
-                                 data=json.dumps(data, separators=(',', ':')), timeout=15)
-        resData = response.json()
+        try:
+            response = requests.post(READ_URL, headers=headers, cookies=cookies,
+                                     data=json.dumps(data, separators=(',', ':')), timeout=15)
+            resData = response.json()
+        except Exception as exc:
+            # 网络抖一下、或者服务端甩回一个非 JSON 的错误页，**不能让这一趟白跑**：
+            # 计入连续失败，歇几秒重来；连续到上限还失败才终止。
+            # （原来这里没保护：一次超时/一次 502 就直接抛到 main，2 小时的活白干。）
+            fail_streak += 1
+            logging.warning("阅读请求失败（连续 %d/%d 次）：%s", fail_streak, MAX_FAIL_STREAK, exc)
+            if fail_streak >= MAX_FAIL_STREAK:
+                raise Exception(
+                    f"连续 {MAX_FAIL_STREAK} 次请求失败（网络异常或响应不是 JSON），"
+                    f"已终止任务。最后一次的错误：{exc}"
+                )
+            time.sleep(5)
+            continue
         logging.debug("response: %s", resData)
 
         if 'succ' in resData:
@@ -178,8 +213,14 @@ def main():
     logging.info("=" * 50)
 
     try:
-        # 首次刷新 cookie 也放进 try，保证失败也能被统一捕获并推送
-        refresh_cookie()
+        # 开跑前先续一次 cookie。**失败不终止**：续期接口本身会抽风（实测有过
+        # "连续失败 1/10 次"的日志），而手头这个 cookie 可能还好用；
+        # 真失效的话，下面读的循环会连续失败到上限再终止并推送通知。
+        if not refresh_cookie(silent=True):
+            logging.warning(
+                "开跑前刷新 cookie 失败，先用现有 cookie 试读；"
+                "如果它已经失效，读的循环会连续失败到上限再终止并通知。"
+            )
         done = run_read()
     except Exception as exc:
         # 任何异常：记录完整堆栈 + 推送失败通知
