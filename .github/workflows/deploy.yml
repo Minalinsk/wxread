@@ -33,11 +33,14 @@ jobs:
         echo "nameserver 8.8.8.8" | sudo tee /etc/resolv.conf
         echo "nameserver 8.8.4.4" | sudo tee -a /etc/resolv.conf
 
+    # ⚠️ 版本别往回调：v4 / v5 声明的是 Node 20，GitHub 已弃用，
+    #    日志顶部会挂一条 ##[warning]"Node.js 20 is deprecated"（不是报错）。
+    #    checkout v5 / setup-python v6 起改用 Node 24。
     - name: Checkout repository
-      uses: actions/checkout@v4
+      uses: actions/checkout@v5
 
     - name: Set up Python
-      uses: actions/setup-python@v5
+      uses: actions/setup-python@v6
       with:
         python-version: '3.10'
 
@@ -71,6 +74,14 @@ jobs:
         READ_NUM: ${{ vars.READ_NUM }}  # 使用 Repository Variables
 
       run: |
+        # READ_NUM 本该来自 Repository Variable。变量被删/改名时，
+        # config.py 的 `int(os.getenv('READ_NUM') or 40)` 会**静默退化成 40 次（20 分钟）**，
+        # 读书时长腰斩而且一句错都不报 —— 这里兜一下，并打一条警告 annotation。
+        if [ -z "$READ_NUM" ]; then
+          echo "::warning::READ_NUM 没配（Repository Variable），本次按 240 兜底。"
+          export READ_NUM=240
+        fi
+        echo "本次阅读次数：$READ_NUM（约 $((READ_NUM / 2)) 分钟）"
         python main.py
 
   keepalive-job:

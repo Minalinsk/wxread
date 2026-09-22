@@ -65,7 +65,10 @@ refresh_print = setup_logging()
 def refresh_cookie(silent=False):
     """刷新 cookie
 
-    silent=True 时不推送、不抛异常，仅返回布尔值（用于顶层 safe_push 之外的场景）。
+    silent=True 时不抛异常、只返回布尔值。
+    ⚠️ 刷新失败时**不在这里推送**：这个函数只在 main() 的 try 里被调用，
+    异常最终会被 main() 的兜底捕获并推送一条失败通知；早先这里自己又推一条，
+    结果同一次故障会收到两条一模一样的消息。
     """
     logging.info("刷新 cookie")
     new_skey = get_wr_skey()
@@ -79,7 +82,7 @@ def refresh_cookie(silent=False):
     logging.error(ERROR_CODE)
     if silent:
         return False
-    push(ERROR_CODE, PUSH_METHOD, is_success=False)
+    # 推送交给 main() 统一处理，别在这儿重复推
     raise Exception(ERROR_CODE)
 
 
@@ -98,13 +101,19 @@ def safe_push(content, is_success):
 # 连续失败的最大容忍次数，超过则终止，防止死循环烧额度
 MAX_FAIL_STREAK = int(os.getenv('MAX_FAIL_STREAK') or 10)
 
+# 「拿不到 synckey 就修一下」的最大连续次数。
+# 原来这条分支既不计次、也不 sleep，修不好就会**无间隔地一直打接口**，
+# 一路转到 job 超时（5 小时）才被强杀 —— 既烧额度又容易触发风控。
+MAX_SYNCKEY_FIX = int(os.getenv('MAX_SYNCKEY_FIX') or 5)
+
 
 def run_read():
     """执行阅读主流程，返回实际完成的次数"""
     index = 1
     lastTime = int(time.time()) - 30
     fail_streak = 0
-    logging.info(f"一共需要阅读 {READ_NUM} 次。")
+    synckey_fix = 0
+    logging.info(f"一共需要阅读 {READ_NUM} 次（约 {READ_NUM * 0.5:.0f} 分钟）。")
 
     while index <= READ_NUM:
         data.pop('s')
@@ -128,13 +137,22 @@ def run_read():
         if 'succ' in resData:
             fail_streak = 0
             if 'synckey' in resData:
+                synckey_fix = 0
                 lastTime = thisTime
                 index += 1
                 time.sleep(30)
                 refresh_print(f"阅读进度: 第 {min(index, READ_NUM + 1) - 1}/{READ_NUM} 次，已完成 {(index - 1) * 0.5:.1f} 分钟")
             else:
-                logging.warning("无 synckey，尝试修复...")
+                synckey_fix += 1
+                logging.warning("无 synckey，尝试修复...（连续第 %d/%d 次）", synckey_fix, MAX_SYNCKEY_FIX)
+                if synckey_fix >= MAX_SYNCKEY_FIX:
+                    raise Exception(
+                        f"连续 {MAX_SYNCKEY_FIX} 次拿不到 synckey，已终止任务"
+                        f"（避免无间隔死循环空打接口）。请检查 WXREAD_CURL_BASH 是否已过期。"
+                    )
                 fix_no_synckey()
+                # 修复完歇一下再试，别高频打接口
+                time.sleep(3)
         else:
             fail_streak += 1
             logging.warning("cookie 已过期，尝试刷新...（连续失败 %d/%d 次）", fail_streak, MAX_FAIL_STREAK)
