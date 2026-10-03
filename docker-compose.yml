@@ -20,7 +20,7 @@ services:
       # 定时任务时间（Cron 表达式）
       CRON_SCHEDULE: "0 1 * * *"
 
-      # 可选配置：推送方式 (pushplus/wxpusher/telegram/serverchan)
+      # 可选配置：推送方式 (pushplus/wxpusher/telegram/serverchan/wecom)
       PUSH_METHOD: ""
       # PushPlus 推送配置
       PUSHPLUS_TOKEN: ""
@@ -31,3 +31,9 @@ services:
       WXPUSHER_SPT: ""
       # ServerChan 推送配置
       SERVERCHAN_SPT: ""
+      # 企业微信机器人推送配置（填完整 Webhook 地址或只填 key）
+      WECOM_WEBHOOK: ""
+      # markdown(默认) 或 text
+      WECOM_MSGTYPE: "markdown"
+      # 仅 text 类型生效：@all 或成员 userid，逗号分隔
+      WECOM_MENTIONED: ""

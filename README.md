@@ -32,8 +32,8 @@
 - Fork这个仓库后，先打开 fork 的 **Actions** 页面，启用 `wxread` workflow；公开仓库 fork 后，定时 workflow 默认不会自动启用。
 - 在仓库 **Settings** -> 左侧列表中的 **Secrets and variables** -> **Actions**，然后在右侧的 **Repository secrets** 中添加如下值：
   - `WXREAD_CURL_BASH`：上面抓read接口后转换为curl_bash的数据。
-  - `PUSH_METHOD`：推送方法，4选1推送方式（pushplus、wxpusher、telegram、serverChan）。
-  - `PUSHPLUS_TOKEN` or `WXPUSHER_SPT` or `TELEGRAM_BOT_TOKEN`&`TELEGRAM_CHAT_ID` or `SERVERCHAN_SPT`: 选择推送后填写对应token。
+  - `PUSH_METHOD`：推送方法，5选1推送方式（pushplus、wxpusher、telegram、serverChan、wecom）。
+  - `PUSHPLUS_TOKEN` or `WXPUSHER_SPT` or `TELEGRAM_BOT_TOKEN`&`TELEGRAM_CHAT_ID` or `SERVERCHAN_SPT` or `WECOM_WEBHOOK`: 选择推送后填写对应token。
   
 - 在 **Variables** 部分，最下方添加变量：
   - `READ_NUM`：设定每次阅读的目标次数。
@@ -45,13 +45,57 @@
 | ------------------------- | ---------------------------------- | ------------------------------------------------------------ | --------- |
 | `WXREAD_CURL_BASH`         | `read` 接口 `curl_bash`数据 | **必填**，必须提供有效指令                                   | secrets   |
 | `READ_NUM`                 | 阅读次数（每次 30 秒）              | **可选**，阅读时长，默认 20 分钟                           | variables |
-| `PUSH_METHOD`              | `pushplus`/`wxpusher`/`telegram`/`serverchan`    | **可选**，推送方式，4选1，默认不推送                                       |    secrets     |
+| `PUSH_METHOD`              | `pushplus`/`wxpusher`/`telegram`/`serverchan`/`wecom`    | **可选**，推送方式，5选1，默认不推送                                       |    secrets     |
 | `PUSHPLUS_TOKEN`           | PushPlus 的 token                   | 当 `PUSH_METHOD=pushplus` 时必填，[获取地址](https://www.pushplus.plus/uc.html) | secrets   |
 | `WXPUSHER_SPT`             | WxPusher 的token                    | 当 `PUSH_METHOD=wxpusher` 时必填，[获取地址](https://wxpusher.zjiecode.com/docs/#/?id=获取spt) | secrets   |
 | `TELEGRAM_BOT_TOKEN`  <br>`TELEGRAM_CHAT_ID`   <br>`http_proxy`/`https_proxy`（可选）| 群组id以及机器人token                 | 当 `PUSH_METHOD=telegram` 时必填，[配置文档](https://www.nodeseek.com/post-22475-1) | secrets   |
 | `SERVERCHAN_SPT`          | serverchan 的 SendKey               | 当 `PUSH_METHOD=serverchan` 时必填，[获取地址](https://sct.ftqq.com/sendkey) | secrets   |
+| `WECOM_WEBHOOK`           | 企业微信机器人的 Webhook 地址，或只填 `key` | 当 `PUSH_METHOD=wecom` 时必填，见下方【企业微信机器人推送】 | secrets   |
+| `WECOM_MSGTYPE`           | `markdown`（默认）/`text`            | **可选**，消息类型；`text` 类型才支持 @ 成员                 | variables |
+| `WECOM_MENTIONED`         | `@all` 或成员 userid，逗号分隔        | **可选**，仅 `WECOM_MSGTYPE=text` 时生效                     | secrets   |
 
 **重要：除了READ_NUM配置在varables，其它的都配置在secrets里面的；需要推送`PUSH_METHOD`是必填的。**
+
+### 企业微信机器人推送 🏢
+
+企业微信群机器人不需要服务器、不需要企业认证，建群即可用，是国内最省事的推送方式之一。
+
+**步骤1：获取 Webhook 地址**
+
+1. 打开企业微信，进入任意一个群（可以自己建一个只有自己的群）。
+2. 点击右上角 `...` -> **群机器人** -> **添加机器人** -> **新创建一个机器人**，起个名字（例如「微信读书」）。
+3. 创建完成后点击该机器人，**复制 Webhook 地址**，形如：
+   `https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=693a91f6-7xxx-4bc4-97a0-0ec2sifa5aaa`
+
+**步骤2：配置**
+
+- GitHub Action 部署：在 **Repository secrets** 中新增 `PUSH_METHOD=wecom` 和 `WECOM_WEBHOOK`（粘贴完整地址即可）。
+- Docker/本地部署：设置环境变量 `WECOM_WEBHOOK`，或直接修改 `config.py` 里的 `WECOM_WEBHOOK`。
+
+`WECOM_WEBHOOK` 支持三种填法，任选其一：
+
+```
+https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=693a91f6-7xxx-4bc4-97a0-0ec2sifa5aaa   # 完整地址
+693a91f6-7xxx-4bc4-97a0-0ec2sifa5aaa                                                       # 只填 key
+key=693a91f6-7xxx-4bc4-97a0-0ec2sifa5aaa                                                   # key= 形式
+```
+
+**步骤3（可选）：@ 提醒**
+
+机器人默认发 `markdown` 消息（标题加粗，可读性好）。如果想在推送失败时 @ 全体成员，把消息类型改为 `text`：
+
+```
+PUSH_METHOD=wecom
+WECOM_WEBHOOK=693a91f6-7xxx-4bc4-97a0-0ec2sifa5aaa
+WECOM_MSGTYPE=text
+WECOM_MENTIONED=@all          # 或填成员 userid，多个用逗号分隔
+```
+
+**说明：**
+
+- 单机器人发送频率上限约为 **20 条/分钟**，本脚本每天只推送 1 次，不会触发限制；万一遇到频率限制会自动等待后重试。
+- 机器人 Webhook 中的 `key` 等同于密码，**不要提交到代码仓库**，请只放在 secrets / 环境变量里。
+- 如果日志出现 `errcode=93000`，说明 Webhook 地址或 key 填错了，脚本会直接失败而不会无意义地反复重试。
 
 ### 视频教程
 
@@ -85,7 +129,7 @@ services:
       # 定时任务时间（Cron 表达式）
       CRON_SCHEDULE: "0 1 * * *"
       
-      # 可选配置：推送方式 (pushplus/wxpusher/telegram/serverchan)
+      # 可选配置：推送方式 (pushplus/wxpusher/telegram/serverchan/wecom)
       PUSH_METHOD: ""
       # PushPlus 推送配置
       PUSHPLUS_TOKEN: ""
@@ -96,6 +140,10 @@ services:
       WXPUSHER_SPT: ""
       # ServerChan 推送配置
       SERVERCHAN_SPT: ""
+      # 企业微信机器人推送配置
+      WECOM_WEBHOOK: ""
+      WECOM_MSGTYPE: "markdown"
+      WECOM_MENTIONED: ""
 ```
 
 **Cron 定时任务配置：**
@@ -133,7 +181,7 @@ docker-compose exec wxread python /app/main.py
 
 3. **GitHub Action部署/本地部署**：主要配置config.py即可，Action部署使用环境变量，本地部署修改config.py里的阅读次数、headers、cookies即可。
 
-4. **推送**：pushplus推送偶尔出问题，猜测是GitHub action环境问题，增加重试机制。并增加wxpusher的极简推送方式。
+4. **推送**：pushplus推送偶尔出问题，猜测是GitHub action环境问题，增加重试机制。并增加wxpusher的极简推送方式。企业微信机器人推送（`wecom`）无需中转服务，配置最简单。
 
 
 ***

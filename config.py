@@ -9,7 +9,7 @@ import re
 
 # 阅读次数 默认40次/20分钟
 READ_NUM = int(os.getenv('READ_NUM') or 40)
-# 需要推送时可选，可选pushplus、wxpusher、telegram
+# 需要推送时可选，可选pushplus、wxpusher、telegram、serverchan、wecom（企业微信机器人）
 PUSH_METHOD = "" or os.getenv('PUSH_METHOD')
 # pushplus推送时需填
 PUSHPLUS_TOKEN = "" or os.getenv("PUSHPLUS_TOKEN")
@@ -20,6 +20,13 @@ TELEGRAM_CHAT_ID = "" or os.getenv("TELEGRAM_CHAT_ID")
 WXPUSHER_SPT = "" or os.getenv("WXPUSHER_SPT")
 # SeverChan推送时需填
 SERVERCHAN_SPT = "" or os.getenv("SERVERCHAN_SPT")
+# 企业微信机器人推送时需填：完整 Webhook 地址，或只填 key
+# 获取方式：企业微信群 -> 右上角 ... -> 群机器人 -> 添加机器人 -> 复制 Webhook 地址
+WECOM_WEBHOOK = "" or os.getenv("WECOM_WEBHOOK")
+# 企业微信消息类型：markdown（默认，带加粗标题）或 text（支持 @ 成员）
+WECOM_MSGTYPE = os.getenv("WECOM_MSGTYPE") or "markdown"
+# 仅在 WECOM_MSGTYPE=text 时生效：@all 或成员 userid，多个用逗号分隔
+WECOM_MENTIONED = "" or os.getenv("WECOM_MENTIONED")
 
 
 # read接口的bash命令，本地部署时可对应替换headers、cookies
